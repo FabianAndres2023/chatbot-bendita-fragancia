@@ -2,20 +2,16 @@ import express from "express";
 import dotenv from "dotenv";
 import { handleIncomingMessage } from "./conversation.js";
 
-dotenv.config();
+dotenv.config({ override: true });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
-// Prueba segura para confirmar que sí está leyendo el .env
-console.log("TOKEN CARGADO:", process.env.WHATSAPP_TOKEN ? process.env.WHATSAPP_TOKEN.slice(0, 12) + "..." : "NO HAY TOKEN");
-console.log("PHONE ID:", process.env.WHATSAPP_PHONE_NUMBER_ID || "NO HAY PHONE ID");
-
 app.use(express.json());
 
 app.get("/", (req, res) => {
-  res.send("Bot de perfumería funcionando ✅");
+  res.status(200).send("Bot de perfumería funcionando ✅");
 });
 
 app.get("/webhook", (req, res) => {
@@ -36,42 +32,25 @@ app.post("/webhook", async (req, res) => {
   try {
     const body = req.body;
 
-    if (body.object !== "whatsapp_business_account") {
-      return res.sendStatus(404);
-    }
+    if (body.object) {
+      const entry = body.entry?.[0];
+      const changes = entry?.changes?.[0];
+      const value = changes?.value;
+      const message = value?.messages?.[0];
 
-    const entry = body.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
-    const messages = value?.messages;
+      if (message && message.type === "text") {
+        const phone = message.from;
+        const text = message.text?.body || "";
 
-    if (!messages || messages.length === 0) {
-      return res.sendStatus(200);
-    }
+        console.log(`Mensaje recibido: ${phone} ${text}`);
 
-    const message = messages[0];
-    const phone = message.from;
-
-    let text = "";
-
-    if (message.type === "text") {
-      text = message.text?.body || "";
-    }
-
-    if (message.type !== "text") {
-      await handleIncomingMessage(
-        phone,
-        "menu"
-      );
+        await handleIncomingMessage(phone, text);
+      }
 
       return res.sendStatus(200);
     }
 
-    console.log("Mensaje recibido:", phone, text);
-
-    await handleIncomingMessage(phone, text);
-
-    return res.sendStatus(200);
+    return res.sendStatus(404);
   } catch (error) {
     console.error("Error en webhook:", error);
     return res.sendStatus(500);
