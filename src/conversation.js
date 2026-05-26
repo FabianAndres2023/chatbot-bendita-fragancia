@@ -175,10 +175,33 @@ Responde con el número de la opción que prefieras.`
 }
 
 async function sendCatalog(phone) {
-  const mediaId = process.env.CATALOG_MEDIA_ID;
-  const filename =
-    process.env.CATALOG_FILE_NAME || "CATALOGO PERFUMES BENDITA FRAGANCIA.pdf";
+  const transport = (process.env.WHATSAPP_TRANSPORT || "meta").toLowerCase();
 
+  const mediaId = process.env.CATALOG_MEDIA_ID || "";
+
+  const filename =
+    process.env.CATALOG_FILE_NAME ||
+    "CATALOGO PERFUMES BENDITA FRAGANCIA.pdf";
+
+  const caption = `Claro 😊 Aquí tienes nuestro catálogo actualizado.
+
+Cuando veas un perfume que te guste, escríbeme el nombre y te ayudo con precio, disponibilidad y pedido.
+
+También puedo recomendarte opciones si buscas algo dulce, fresco, elegante o para regalo.`;
+
+  /*
+    Cuando el bot trabaja con Make, el PDF se envía mediante
+    la URL pública configurada en whatsapp.js y Make.
+    En este caso no necesitamos usar Media ID.
+  */
+  if (transport === "make") {
+    return sendWhatsAppDocument(phone, "", filename, caption);
+  }
+
+  /*
+    Si el bot se usa directamente con Meta Cloud API,
+    se conserva el envío anterior usando Media ID.
+  */
   if (!mediaId) {
     return sendWhatsAppMessage(
       phone,
@@ -186,21 +209,7 @@ async function sendCatalog(phone) {
     );
   }
 
-  await sendWhatsAppMessage(
-    phone,
-    `Claro 😊 Te envío nuestro catálogo actualizado.
-
-Cuando veas un perfume que te guste, escríbeme el nombre y te ayudo con precio, disponibilidad y pedido.
-
-También puedo recomendarte opciones si buscas algo dulce, fresco, elegante o para regalo.`
-  );
-
-  return sendWhatsAppDocument(
-    phone,
-    mediaId,
-    filename,
-    "📄 Catálogo Bendita Fragancia"
-  );
+  return sendWhatsAppDocument(phone, mediaId, filename, caption);
 }
 
 function askProductName(phone, state, message) {
@@ -240,7 +249,12 @@ Responde con el número de la opción que prefieras.`
   );
 }
 
-async function sendAiHelpOrFallback(phone, text, state, nextStep = "PRODUCT_FOUND") {
+async function sendAiHelpOrFallback(
+  phone,
+  text,
+  state,
+  nextStep = "PRODUCT_FOUND"
+) {
   const aiResponse = await getAiSalesResponse(text);
 
   state.step = nextStep;
@@ -333,7 +347,10 @@ function shouldUseAi(text) {
     "frío"
   ];
 
-  return aiKeywords.some((word) => text.includes(word)) || text.split(" ").length >= 3;
+  return (
+    aiKeywords.some((word) => text.includes(word)) ||
+    text.split(" ").length >= 3
+  );
 }
 
 async function handleProductHelpOptionStep(phone, text, state) {
@@ -1006,7 +1023,11 @@ Total de productos: ${state.totalUnits}
 Tipo de precio: ${state.isWholesale ? "Mayorista ✅" : "Detal"}
 Total estimado: ${formatPrice(state.totalPrice)}
 
-${state.isWholesale ? "Ya aplicas precio mayorista por llevar 3 productos o más 🎉" : "Recuerda: desde 3 productos puedes acceder a precio mayorista 😊"}`;
+${
+  state.isWholesale
+    ? "Ya aplicas precio mayorista por llevar 3 productos o más 🎉"
+    : "Recuerda: desde 3 productos puedes acceder a precio mayorista 😊"
+}`;
 }
 
 function handleCustomerNameStep(phone, rawText, state) {
