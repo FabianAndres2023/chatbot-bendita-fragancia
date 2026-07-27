@@ -35,19 +35,7 @@ export async function handleIncomingMessage(phone, message) {
     );
   }
 
-  if (
-    [
-      "menu",
-      "inicio",
-      "reiniciar",
-      "empezar",
-      "hola",
-      "buenas",
-      "buenos dias",
-      "buenas tardes",
-      "buenas noches"
-    ].includes(text)
-  ) {
+  if (isMainMenuRequest(text)) {
     states.set(phone, { step: "MAIN_MENU", cart: [] });
     return sendMainMenu(phone);
   }
@@ -288,6 +276,61 @@ Puedes elegir una de estas opciones:
 
 O escríbeme el nombre de un perfume que quieras buscar.`
   );
+}
+
+function isMainMenuRequest(text) {
+  if (!text) {
+    return false;
+  }
+
+  const exactMenuMessages = [
+    "menu",
+    "menu principal",
+    "inicio",
+    "reiniciar",
+    "empezar",
+    "hola",
+    "buenas",
+    "buenos dias",
+    "buenas tardes",
+    "buenas noches",
+    "hola quiero mas informacion",
+    "hola quiero informacion",
+    "quiero mas informacion",
+    "quiero informacion",
+    "deseo mas informacion",
+    "deseo informacion",
+    "mas informacion",
+    "informacion",
+    "info",
+    "me interesa",
+    "estoy interesado",
+    "estoy interesada",
+    "vengo del anuncio",
+    "vi el anuncio"
+  ];
+
+  if (exactMenuMessages.includes(text)) {
+    return true;
+  }
+
+  const hasGreeting =
+    text.startsWith("hola ") ||
+    text.startsWith("buenas ") ||
+    text.startsWith("buenos dias ") ||
+    text.startsWith("buenas tardes ") ||
+    text.startsWith("buenas noches ");
+
+  const asksForGenericInformation =
+    text.includes("quiero mas informacion") ||
+    text.includes("quiero informacion") ||
+    text.includes("deseo mas informacion") ||
+    text.includes("deseo informacion") ||
+    text.includes("me interesa") ||
+    text.includes("vengo del anuncio") ||
+    text.includes("vi el anuncio");
+
+  return hasGreeting && asksForGenericInformation;
 }
 
 function shouldUseAi(text) {
