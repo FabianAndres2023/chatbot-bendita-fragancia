@@ -1,0 +1,16 @@
+name: Mantener App Viva
+
+on:
+  schedule:
+    # Se ejecuta cada 12 minutos de lunes a domingo
+    - cron: '*/12 * * * *'
+  # Te permite probar el truco manualmente cuando quieras desde la pestaña Actions
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hacer peticion HTTP a Render
+        run: |
+          curl -I https://chatbot-bendita-fragancia.onrender.com/
