@@ -16,17 +16,31 @@ const __dirname = path.dirname(__filename);
 const catalogPath = path.join(__dirname, "../data/catalogo.pdf");
 
 /*
-  Almacena temporalmente los IDs de mensajes procesados.
-  Evita que Make o Meta procesen dos veces el mismo mensaje.
+  IDs de mensajes procesados temporalmente.
+  Evita respuestas duplicadas.
 */
 const processedMessageIds = new Map();
 
 const MESSAGE_ID_TTL_MS = 24 * 60 * 60 * 1000;
 
+/*
+  Máxima antigüedad permitida de un mensaje.
+
+  Si Make libera mensajes acumulados varias horas después,
+  serán descartados aunque originalmente hayan pertenecido
+  al horario nocturno.
+
+  15 minutos da margen suficiente para retrasos normales
+  de Make o Render.
+*/
+const MAX_MESSAGE_AGE_MINUTES = Number(
+  process.env.BOT_MAX_MESSAGE_AGE_MINUTES || "15"
+);
+
 app.use(express.json({ limit: "2mb" }));
 
 /*
-  Convierte una hora HH:mm a minutos desde las 00:00.
+  Convierte HH:mm en minutos desde medianoche.
 */
 function timeToMinutes(time) {
   if (!time || !/^\d{2}:\d{2}$/.test(time)) {
@@ -50,16 +64,17 @@ function timeToMinutes(time) {
 }
 
 /*
-  Obtiene la hora actual en la zona configurada.
+  Obtiene hora/minuto de una fecha determinada
+  dentro de una zona horaria.
 */
-function getCurrentTimeInTimezone(timeZone) {
+function getTimeInTimezone(date, timeZone) {
   try {
     const parts = new Intl.DateTimeFormat("en-US", {
       timeZone,
       hour: "2-digit",
       minute: "2-digit",
       hour12: false
-    }).formatToParts(new Date());
+    }).formatToParts(date);
 
     const hour = Number(
       parts.find((part) => part.type === "hour")?.value
@@ -76,11 +91,14 @@ function getCurrentTimeInTimezone(timeZone) {
     return {
       hour,
       minute,
-      totalMinutes: hour * 60 + minute
+      totalMinutes: hour * 60 + minute,
+      formatted:
+        `${String(hour).padStart(2, "0")}:` +
+        `${String(minute).padStart(2, "0")}`
     };
   } catch (error) {
     console.error(
-      "Error obteniendo hora del bot:",
+      "Error obteniendo hora en zona horaria:",
       error.message
     );
 
@@ -89,15 +107,59 @@ function getCurrentTimeInTimezone(timeZone) {
 }
 
 /*
-  Determina si el bot puede responder según el horario configurado.
+  Hora actual del bot.
+*/
+function getCurrentTimeInTimezone(timeZone) {
+  return getTimeInTimezone(new Date(), timeZone);
+}
 
-  Ejemplo:
-  Inicio: 19:00
-  Fin: 09:00
+/*
+  Determina si cierta hora pertenece
+  al horario nocturno configurado.
+*/
+function isTimeInsideBotSchedule(totalMinutes) {
+  const startTime =
+    process.env.BOT_START_TIME || "19:00";
 
-  El bot responde:
-  19:00 - 23:59
-  00:00 - 08:59
+  const endTime =
+    process.env.BOT_END_TIME || "09:00";
+
+  const startMinutes = timeToMinutes(startTime);
+  const endMinutes = timeToMinutes(endTime);
+
+  if (
+    startMinutes === null ||
+    endMinutes === null ||
+    totalMinutes === null
+  ) {
+    return false;
+  }
+
+  /*
+    Ejemplo:
+    19:00 → 09:00
+    Cruza medianoche.
+  */
+  if (startMinutes > endMinutes) {
+    return (
+      totalMinutes >= startMinutes ||
+      totalMinutes < endMinutes
+    );
+  }
+
+  /*
+    Horario dentro del mismo día.
+  */
+  return (
+    totalMinutes >= startMinutes &&
+    totalMinutes < endMinutes
+  );
+}
+
+/*
+  Comprueba el horario ACTUAL.
+
+  Esta sigue siendo nuestra segunda barrera.
 */
 function isBotAllowedToRespond() {
   const onlyNight =
@@ -105,10 +167,6 @@ function isBotAllowedToRespond() {
       .trim()
       .toLowerCase() === "true";
 
-  /*
-    Si BOT_ONLY_NIGHT no está activado,
-    se permite responder siempre.
-  */
   if (!onlyNight) {
     return {
       allowed: true,
@@ -125,54 +183,26 @@ function isBotAllowedToRespond() {
   const endTime =
     process.env.BOT_END_TIME || "09:00";
 
-  const startMinutes = timeToMinutes(startTime);
-  const endMinutes = timeToMinutes(endTime);
-  const currentTime = getCurrentTimeInTimezone(timeZone);
+  const currentTime =
+    getCurrentTimeInTimezone(timeZone);
 
-  /*
-    Ante cualquier error de configuración,
-    el bot queda bloqueado por seguridad.
-  */
-  if (
-    startMinutes === null ||
-    endMinutes === null ||
-    !currentTime
-  ) {
+  if (!currentTime) {
     return {
       allowed: false,
-      reason: "Horario del bot inválido o no disponible"
+      reason: "No fue posible determinar la hora actual"
     };
   }
 
-  let allowed;
-
-  /*
-    Horario que cruza medianoche:
-    19:00 hasta 09:00.
-  */
-  if (startMinutes > endMinutes) {
-    allowed =
-      currentTime.totalMinutes >= startMinutes ||
-      currentTime.totalMinutes < endMinutes;
-  } else {
-    /*
-      Horario dentro del mismo día.
-    */
-    allowed =
-      currentTime.totalMinutes >= startMinutes &&
-      currentTime.totalMinutes < endMinutes;
-  }
-
-  const currentFormatted =
-    `${String(currentTime.hour).padStart(2, "0")}:` +
-    `${String(currentTime.minute).padStart(2, "0")}`;
+  const allowed = isTimeInsideBotSchedule(
+    currentTime.totalMinutes
+  );
 
   return {
     allowed,
     reason: allowed
-      ? `Bot habilitado a las ${currentFormatted}`
-      : `Bot bloqueado a las ${currentFormatted}`,
-    currentTime: currentFormatted,
+      ? `Bot habilitado a las ${currentTime.formatted}`
+      : `Bot bloqueado a las ${currentTime.formatted}`,
+    currentTime: currentTime.formatted,
     timeZone,
     startTime,
     endTime
@@ -180,22 +210,179 @@ function isBotAllowedToRespond() {
 }
 
 /*
-  Limpia periódicamente los messageId antiguos.
+  Convierte distintos formatos de timestamp
+  enviados por Make o Meta en Date.
+*/
+function parseMessageTimestamp(rawTimestamp) {
+  if (
+    rawTimestamp === undefined ||
+    rawTimestamp === null ||
+    rawTimestamp === ""
+  ) {
+    return null;
+  }
+
+  /*
+    Timestamp numérico:
+    Meta normalmente usa segundos Unix.
+  */
+  if (
+    typeof rawTimestamp === "number" ||
+    /^\d+$/.test(String(rawTimestamp).trim())
+  ) {
+    const numeric = Number(rawTimestamp);
+
+    if (!Number.isFinite(numeric)) {
+      return null;
+    }
+
+    /*
+      10 dígitos aprox. = segundos Unix.
+      13 dígitos aprox. = milisegundos Unix.
+    */
+    const milliseconds =
+      numeric < 100000000000
+        ? numeric * 1000
+        : numeric;
+
+    const date = new Date(milliseconds);
+
+    return Number.isNaN(date.getTime())
+      ? null
+      : date;
+  }
+
+  /*
+    ISO u otro formato de fecha compatible.
+  */
+  const date = new Date(String(rawTimestamp).trim());
+
+  return Number.isNaN(date.getTime())
+    ? null
+    : date;
+}
+
+/*
+  Valida la hora ORIGINAL del mensaje.
+
+  Esta es la protección contra mensajes acumulados
+  durante el día.
+*/
+function validateOriginalMessageTime(rawTimestamp) {
+  const timeZone =
+    process.env.BOT_TIMEZONE || "America/Bogota";
+
+  const parsedDate =
+    parseMessageTimestamp(rawTimestamp);
+
+  /*
+    Si Make no envía timestamp o llega inválido,
+    bloqueamos por seguridad.
+  */
+  if (!parsedDate) {
+    return {
+      allowed: false,
+      reason:
+        "Timestamp original ausente o inválido"
+    };
+  }
+
+  const messageTime =
+    getTimeInTimezone(parsedDate, timeZone);
+
+  if (!messageTime) {
+    return {
+      allowed: false,
+      reason:
+        "No fue posible interpretar la hora original"
+    };
+  }
+
+  /*
+    Comprobamos antigüedad.
+  */
+  const ageMs =
+    Date.now() - parsedDate.getTime();
+
+  const ageMinutes =
+    ageMs / (60 * 1000);
+
+  /*
+    Permitimos hasta 5 minutos hacia el futuro
+    por pequeñas diferencias de reloj.
+  */
+  if (ageMinutes < -5) {
+    return {
+      allowed: false,
+      reason:
+        `Timestamp futuro inválido: ${ageMinutes.toFixed(1)} min`
+    };
+  }
+
+  /*
+    Mensajes demasiado viejos se descartan.
+  */
+  if (ageMinutes > MAX_MESSAGE_AGE_MINUTES) {
+    return {
+      allowed: false,
+      reason:
+        `Mensaje antiguo descartado: ` +
+        `${ageMinutes.toFixed(1)} minutos de antigüedad`,
+      messageTime: messageTime.formatted
+    };
+  }
+
+  /*
+    Ahora comprobamos que la HORA ORIGINAL
+    pertenezca al horario del chatbot.
+  */
+  const insideSchedule =
+    isTimeInsideBotSchedule(
+      messageTime.totalMinutes
+    );
+
+  if (!insideSchedule) {
+    return {
+      allowed: false,
+      reason:
+        `Mensaje original enviado fuera del horario del bot ` +
+        `a las ${messageTime.formatted}`,
+      messageTime: messageTime.formatted
+    };
+  }
+
+  return {
+    allowed: true,
+    reason:
+      `Mensaje original válido a las ${messageTime.formatted}`,
+    messageTime: messageTime.formatted,
+    ageMinutes
+  };
+}
+
+/*
+  Limpia IDs antiguos.
 */
 function cleanProcessedMessageIds() {
   const now = Date.now();
 
-  for (const [messageId, timestamp] of processedMessageIds.entries()) {
+  for (
+    const [messageId, timestamp]
+    of processedMessageIds.entries()
+  ) {
     if (now - timestamp > MESSAGE_ID_TTL_MS) {
       processedMessageIds.delete(messageId);
     }
   }
 }
 
-setInterval(cleanProcessedMessageIds, 60 * 60 * 1000).unref();
+setInterval(
+  cleanProcessedMessageIds,
+  60 * 60 * 1000
+).unref();
 
 /*
-  Determina si un messageId ya fue procesado.
+  Detecta mensajes duplicados.
 */
 function isDuplicateMessage(messageId) {
   if (!messageId) {
@@ -206,32 +393,39 @@ function isDuplicateMessage(messageId) {
     return true;
   }
 
-  processedMessageIds.set(messageId, Date.now());
+  processedMessageIds.set(
+    messageId,
+    Date.now()
+  );
+
   return false;
 }
 
 /*
-  Ruta principal para comprobar que Render está funcionando.
+  Estado del servidor.
 */
 app.get("/", (req, res) => {
-  res.status(200).send("Bot de perfumería funcionando ✅");
+  res
+    .status(200)
+    .send("Bot de perfumería funcionando ✅");
 });
 
 /*
-  Ruta de diagnóstico del horario.
-  No envía mensajes.
+  Diagnóstico del horario actual.
 */
 app.get("/bot-status", (req, res) => {
   const status = isBotAllowedToRespond();
 
   return res.status(200).json({
     ok: true,
+    maxMessageAgeMinutes:
+      MAX_MESSAGE_AGE_MINUTES,
     ...status
   });
 });
 
 /*
-  Ruta pública del catálogo.
+  Catálogo.
 */
 app.get("/catalogo.pdf", (req, res) => {
   res.sendFile(catalogPath, (error) => {
@@ -242,7 +436,9 @@ app.get("/catalogo.pdf", (req, res) => {
       );
 
       if (!res.headersSent) {
-        res.status(404).send("Catálogo no encontrado");
+        res
+          .status(404)
+          .send("Catálogo no encontrado");
       }
     }
   });
@@ -252,24 +448,38 @@ app.get("/catalogo.pdf", (req, res) => {
   Verificación del webhook directo de Meta.
 */
 app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
+  const mode =
+    req.query["hub.mode"];
 
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+  const token =
+    req.query["hub.verify_token"];
+
+  const challenge =
+    req.query["hub.challenge"];
+
+  if (
+    mode === "subscribe" &&
+    token === VERIFY_TOKEN
+  ) {
     console.log(
       "Webhook de Meta verificado correctamente ✅"
     );
 
-    return res.status(200).send(challenge);
+    return res
+      .status(200)
+      .send(challenge);
   }
 
-  console.log("Error verificando webhook de Meta ❌");
+  console.log(
+    "Error verificando webhook de Meta ❌"
+  );
+
   return res.sendStatus(403);
 });
 
 /*
   Recepción directa desde Meta.
+  Se conserva por compatibilidad.
 */
 app.post("/webhook", async (req, res) => {
   try {
@@ -279,21 +489,45 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(404);
     }
 
-    const entry = body.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
-    const message = value?.messages?.[0];
+    const entry =
+      body.entry?.[0];
 
-    if (!message || message.type !== "text") {
+    const changes =
+      entry?.changes?.[0];
+
+    const value =
+      changes?.value;
+
+    const message =
+      value?.messages?.[0];
+
+    if (
+      !message ||
+      message.type !== "text"
+    ) {
       return res.sendStatus(200);
     }
 
-    const phone = String(message.from || "").trim();
-    const text = String(message.text?.body || "").trim();
-    const messageId = String(message.id || "").trim();
+    const phone =
+      String(
+        message.from || ""
+      ).trim();
+
+    const text =
+      String(
+        message.text?.body || ""
+      ).trim();
+
+    const messageId =
+      String(
+        message.id || ""
+      ).trim();
+
+    const messageTimestamp =
+      message.timestamp;
 
     /*
-      Respondemos rápidamente a Meta.
+      Meta recibe respuesta inmediatamente.
     */
     res.sendStatus(200);
 
@@ -305,30 +539,58 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    if (isDuplicateMessage(messageId)) {
+    /*
+      Hora original.
+    */
+    const originalTimeStatus =
+      validateOriginalMessageTime(
+        messageTimestamp
+      );
+
+    if (!originalTimeStatus.allowed) {
       console.log(
-        `Mensaje duplicado ignorado desde Meta: ${messageId}`
+        `Mensaje de Meta descartado. ` +
+        `Cliente: ${phone}. ` +
+        `${originalTimeStatus.reason}`
       );
 
       return;
     }
 
-    const scheduleStatus = isBotAllowedToRespond();
+    /*
+      Horario actual.
+    */
+    const scheduleStatus =
+      isBotAllowedToRespond();
 
     if (!scheduleStatus.allowed) {
       console.log(
-        `Mensaje ignorado fuera del horario del bot. ` +
-        `Cliente: ${phone}. ${scheduleStatus.reason}`
+        `Mensaje ignorado fuera del horario actual. ` +
+        `Cliente: ${phone}. ` +
+        `${scheduleStatus.reason}`
+      );
+
+      return;
+    }
+
+    if (isDuplicateMessage(messageId)) {
+      console.log(
+        `Mensaje duplicado ignorado desde Meta: ` +
+        `${messageId}`
       );
 
       return;
     }
 
     console.log(
-      `Mensaje recibido desde Meta: ${phone} - ${text}`
+      `Mensaje recibido desde Meta: ` +
+      `${phone} - ${text}`
     );
 
-    handleIncomingMessage(phone, text).catch((error) => {
+    handleIncomingMessage(
+      phone,
+      text
+    ).catch((error) => {
       console.error(
         "Error procesando mensaje recibido desde Meta:",
         error
@@ -347,11 +609,12 @@ app.post("/webhook", async (req, res) => {
 });
 
 /*
-  Ruta para recibir mensajes desde Make.
+  Entrada desde Make.
 */
 app.post("/make/incoming", (req, res) => {
   try {
-    const receivedSecret = req.headers["x-make-secret"];
+    const receivedSecret =
+      req.headers["x-make-secret"];
 
     if (
       !MAKE_INCOMING_SECRET ||
@@ -385,19 +648,27 @@ app.post("/make/incoming", (req, res) => {
       req.body.messageId || ""
     ).trim();
 
+    /*
+      NUEVO:
+      timestamp ORIGINAL enviado por Make.
+    */
+    const messageTimestamp =
+      req.body.messageTimestamp;
+
     if (!phone || !message) {
       console.log(
-        "Evento recibido desde Make sin teléfono o sin mensaje."
+        "Evento recibido desde Make sin teléfono o mensaje."
       );
 
       return res.status(400).json({
         ok: false,
-        error: "phone and message are required"
+        error:
+          "phone and message are required"
       });
     }
 
     /*
-      Se responde rápidamente a Make.
+      Contestamos inmediatamente a Make.
     */
     res.status(200).json({
       ok: true,
@@ -406,35 +677,80 @@ app.post("/make/incoming", (req, res) => {
     });
 
     /*
-      Evita reprocesar el mismo mensaje.
+      ==================================================
+      BARRERA 1:
+      validar timestamp ORIGINAL del mensaje.
+      ==================================================
     */
-    if (isDuplicateMessage(messageId)) {
+    const originalTimeStatus =
+      validateOriginalMessageTime(
+        messageTimestamp
+      );
+
+    if (!originalTimeStatus.allowed) {
       console.log(
-        `Mensaje duplicado ignorado desde Make: ${messageId}`
+        `Mensaje descartado desde Make. ` +
+        `Cliente: ${phone}. ` +
+        `${originalTimeStatus.reason}. ` +
+        `Timestamp recibido: ${messageTimestamp || "vacío"}`
       );
 
       return;
     }
 
     /*
-      Bloquea el bot fuera del horario nocturno.
+      ==================================================
+      BARRERA 2:
+      comprobar que ACTUALMENTE también estamos
+      en horario del bot.
+      ==================================================
     */
-    const scheduleStatus = isBotAllowedToRespond();
+    const scheduleStatus =
+      isBotAllowedToRespond();
 
     if (!scheduleStatus.allowed) {
       console.log(
-        `Mensaje ignorado fuera del horario del bot. ` +
-        `Cliente: ${phone}. ${scheduleStatus.reason}`
+        `Mensaje ignorado fuera del horario actual. ` +
+        `Cliente: ${phone}. ` +
+        `${scheduleStatus.reason}`
       );
 
       return;
     }
 
+    /*
+      ==================================================
+      BARRERA 3:
+      bloqueo de Message ID duplicado.
+      ==================================================
+    */
+    if (isDuplicateMessage(messageId)) {
+      console.log(
+        `Mensaje duplicado ignorado desde Make: ` +
+        `${messageId}`
+      );
+
+      return;
+    }
+
+    /*
+      Solo llegamos aquí si:
+
+      1. El mensaje es reciente.
+      2. Fue enviado originalmente entre 19:00 y 09:00.
+      3. Actualmente estamos entre 19:00 y 09:00.
+      4. El messageId no ha sido procesado.
+    */
     console.log(
-      `Mensaje recibido desde Make: ${phone} - ${message}`
+      `Mensaje válido recibido desde Make: ` +
+      `${phone} - ${message}. ` +
+      `Hora original: ${originalTimeStatus.messageTime}`
     );
 
-    handleIncomingMessage(phone, message).catch((error) => {
+    handleIncomingMessage(
+      phone,
+      message
+    ).catch((error) => {
       console.error(
         "Error procesando mensaje recibido desde Make:",
         error
@@ -456,15 +772,26 @@ app.post("/make/incoming", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  const scheduleStatus = isBotAllowedToRespond();
+  const scheduleStatus =
+    isBotAllowedToRespond();
 
-  console.log(`Bot corriendo en puerto ${PORT}`);
+  console.log(
+    `Bot corriendo en puerto ${PORT}`
+  );
+
   console.log(
     `Modo de envío: ${
       process.env.WHATSAPP_TRANSPORT || "meta"
     }`
   );
+
   console.log(
-    `Estado inicial del horario: ${scheduleStatus.reason}`
+    `Estado inicial del horario: ` +
+    `${scheduleStatus.reason}`
+  );
+
+  console.log(
+    `Antigüedad máxima permitida de mensajes: ` +
+    `${MAX_MESSAGE_AGE_MINUTES} minutos`
   );
 });
