@@ -1,7 +1,4 @@
-import {
-  sendWhatsAppMessage,
-  sendWhatsAppDocument
-} from "./whatsapp.js";
+import { sendWhatsAppMessage } from "./whatsapp.js";
 
 import { products, formatPrice } from "./products.js";
 import { getAiSalesResponse } from "./ai.js";
@@ -163,41 +160,22 @@ Responde con el número de la opción que prefieras.`
 }
 
 async function sendCatalog(phone) {
-  const transport = (process.env.WHATSAPP_TRANSPORT || "meta").toLowerCase();
+  const catalogUrl =
+    process.env.CATALOG_URL ||
+    "https://catalogo.treinta.co/benditafragancia";
 
-  const mediaId = process.env.CATALOG_MEDIA_ID || "";
+  return sendWhatsAppMessage(
+    phone,
+    `Claro 😊 Aquí tienes nuestro catálogo actualizado:
 
-  const filename =
-    process.env.CATALOG_FILE_NAME ||
-    "CATALOGO PERFUMES BENDITA FRAGANCIA.pdf";
+${catalogUrl}
 
-  const caption = `Claro 😊 Aquí tienes nuestro catálogo actualizado.
+Puedes revisar allí todos nuestros perfumes disponibles ✨
 
 Cuando veas un perfume que te guste, escríbeme el nombre y te ayudo con precio, disponibilidad y pedido.
 
-También puedo recomendarte opciones si buscas algo dulce, fresco, elegante o para regalo.`;
-
-  /*
-    Cuando el bot trabaja con Make, el PDF se envía mediante
-    la URL pública configurada en whatsapp.js y Make.
-    En este caso no necesitamos usar Media ID.
-  */
-  if (transport === "make") {
-    return sendWhatsAppDocument(phone, "", filename, caption);
-  }
-
-  /*
-    Si el bot se usa directamente con Meta Cloud API,
-    se conserva el envío anterior usando Media ID.
-  */
-  if (!mediaId) {
-    return sendWhatsAppMessage(
-      phone,
-      "En este momento no tengo el catálogo cargado 😔 Una asesora puede ayudarte con las opciones disponibles."
-    );
-  }
-
-  return sendWhatsAppDocument(phone, mediaId, filename, caption);
+También puedo recomendarte opciones si buscas algo dulce, fresco, elegante o para regalo.`
+  );
 }
 
 function askProductName(phone, state, message) {
@@ -1449,7 +1427,9 @@ function isBotAllowedToRespond() {
   const endMinutes = timeToMinutes(endTime);
 
   if (startMinutes === null || endMinutes === null) {
-    console.log("Horario del bot mal configurado. El bot responderá por seguridad.");
+    console.log(
+      "Horario del bot mal configurado. El bot responderá por seguridad."
+    );
     return true;
   }
 
