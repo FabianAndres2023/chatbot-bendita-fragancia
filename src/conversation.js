@@ -155,6 +155,8 @@ Puedo ayudarte con:
 
 Ten presente que desde ${WHOLESALE_MIN_UNITS} productos puedes acceder a precio mayorista. Pueden ser perfumes diferentes 😊
 
+Para compras de 1 o 2 productos, una asesora te confirmará el precio al detal.
+
 Responde con el número de la opción que prefieras.`
   );
 }
@@ -172,9 +174,11 @@ ${catalogUrl}
 
 Puedes revisar allí todos nuestros perfumes disponibles ✨
 
-Cuando veas un perfume que te guste, escríbeme el nombre y te ayudo con precio, disponibilidad y pedido.
+Si deseas comprar al por mayor, recuerda que el precio mayorista aplica desde ${WHOLESALE_MIN_UNITS} productos.
 
-También puedo recomendarte opciones si buscas algo dulce, fresco, elegante o para regalo.`
+Pueden ser perfumes iguales o diferentes.
+
+Cuando veas uno que te guste, escríbeme el nombre y te ayudo con disponibilidad y pedido.`
   );
 }
 
@@ -232,7 +236,7 @@ async function sendAiHelpOrFallback(
       phone,
       `${aiResponse}
 
-Si alguno te gustó, escríbeme el nombre del perfume y te ayudo con precio y pedido 😊
+Si alguno te gustó, escríbeme el nombre del perfume y te ayudo con disponibilidad y precio mayorista 😊
 
 También puedes responder:
 
@@ -315,7 +319,10 @@ function shouldUseAi(text) {
   if (!text || text.length < 4) return false;
 
   const directOptions = ["1", "2", "3", "4", "5", "6", "si", "sí", "no"];
-  if (directOptions.includes(text)) return false;
+
+  if (directOptions.includes(text)) {
+    return false;
+  }
 
   const aiKeywords = [
     "quiero",
@@ -403,10 +410,15 @@ También puedes escribir *recomiéndame* si quieres que te ayude a escoger.`
   ) {
     state.step = "ASK_GENDER";
     states.set(phone, state);
+
     return sendGenderQuestion(phone);
   }
 
-  if (text === "3" || text.includes("asesor") || text.includes("asesora")) {
+  if (
+    text === "3" ||
+    text.includes("asesor") ||
+    text.includes("asesora")
+  ) {
     return handleHumanHandoff(phone);
   }
 
@@ -428,7 +440,6 @@ function handleMainMenuStep(phone, text, rawText, state) {
     text.includes("buscar") ||
     text.includes("perfume especifico")
   ) {
-    state.wantsWholesale = false;
     state.cart = [];
 
     return askProductName(
@@ -444,18 +455,21 @@ function handleMainMenuStep(phone, text, rawText, state) {
     text.includes("recomendacion")
   ) {
     state.step = "ASK_GENDER";
-    state.wantsWholesale = false;
     state.cart = [];
+
     states.set(phone, state);
 
     return sendGenderQuestion(phone);
   }
 
-  if (text === "4" || text.includes("regalo")) {
+  if (
+    text === "4" ||
+    text.includes("regalo")
+  ) {
     state.gender = "regalo";
     state.step = "ASK_SCENT";
-    state.wantsWholesale = false;
     state.cart = [];
+
     states.set(phone, state);
 
     return sendWhatsAppMessage(
@@ -479,7 +493,6 @@ function handleMainMenuStep(phone, text, rawText, state) {
     text.includes("mayor") ||
     text.includes("por mayor")
   ) {
-    state.wantsWholesale = true;
     state.cart = [];
 
     return askProductName(
@@ -561,6 +574,7 @@ function handleGenderStep(phone, text, state) {
 
   state.gender = gender;
   state.step = "ASK_SCENT";
+
   states.set(phone, state);
 
   return sendWhatsAppMessage(
@@ -597,11 +611,12 @@ function handleScentStep(phone, text, state) {
 
   state.scent = scent;
   state.step = "ASK_BUDGET";
+
   states.set(phone, state);
 
   return sendWhatsAppMessage(
     phone,
-    `Muy bien. ¿Qué presupuesto tienes en mente?
+    `Muy bien. ¿Qué presupuesto mayorista tienes en mente por perfume?
 
 1. Económico
 2. Medio
@@ -630,13 +645,30 @@ function handleBudgetStep(phone, text, state) {
   state.budget = budget;
 
   const recommendedProducts = getRecommendations(state);
+
+  if (recommendedProducts.length === 0) {
+    state.step = "PRODUCT_FOUND";
+    state.waitingForProductName = true;
+
+    states.set(phone, state);
+
+    return sendWhatsAppMessage(
+      phone,
+      `No encontré una recomendación exacta con esos filtros 😔
+
+Puedes escribirme el nombre de un perfume, ver el catálogo o pedir ayuda a una asesora.`
+    );
+  }
+
   state.recommendedProducts = recommendedProducts;
   state.step = "SHOW_RECOMMENDATIONS";
+
   states.set(phone, state);
 
   const productList = recommendedProducts
     .map((product, index) => {
-      return `${index + 1}. ${product.name} - ${formatPrice(product.retailPrice)}
+      return `${index + 1}. ${product.name}
+Precio mayorista: ${formatPrice(product.wholesalePrice)}
 ${product.description}`;
     })
     .join("\n\n");
@@ -647,9 +679,11 @@ ${product.description}`;
 
 ${productList}
 
+Los precios mostrados son mayoristas y aplican desde ${WHOLESALE_MIN_UNITS} productos en total.
+
 ¿Cuál de estas opciones te gustaría agregar a tu pedido?
 
-Responde 1, 2 o 3 😊`
+Responde con el número de la opción 😊`
   );
 }
 
@@ -663,7 +697,7 @@ function handleProductSelectionStep(phone, text, state) {
   ) {
     return sendWhatsAppMessage(
       phone,
-      "Por favor responde con el número del perfume que quieres agregar: 1, 2 o 3 😊"
+      "Por favor responde con el número del perfume que quieres agregar 😊"
     );
   }
 
@@ -671,6 +705,7 @@ function handleProductSelectionStep(phone, text, state) {
 
   state.selectedProduct = selectedProduct;
   state.step = "ASK_QUANTITY";
+
   states.set(phone, state);
 
   return askForQuantityAfterProduct(phone, selectedProduct);
@@ -685,13 +720,15 @@ async function handleProductFoundStep(phone, text, state) {
       text.includes("pdf")
     ) {
       await sendCatalog(phone);
+
       state.step = "PRODUCT_FOUND";
       state.waitingForProductName = true;
+
       states.set(phone, state);
 
       return sendWhatsAppMessage(
         phone,
-        "Cuando veas un perfume que te guste, escríbeme el nombre y te ayudo con el precio 😊"
+        "Cuando veas un perfume que te guste, escríbeme el nombre y te ayudo con su precio mayorista 😊"
       );
     }
 
@@ -706,11 +743,17 @@ async function handleProductFoundStep(phone, text, state) {
       text.includes("no conozco")
     ) {
       state.step = "ASK_GENDER";
+
       states.set(phone, state);
+
       return sendGenderQuestion(phone);
     }
 
-    if (text === "3" || text.includes("asesor") || text.includes("asesora")) {
+    if (
+      text === "3" ||
+      text.includes("asesor") ||
+      text.includes("asesora")
+    ) {
       return handleHumanHandoff(phone);
     }
 
@@ -718,7 +761,12 @@ async function handleProductFoundStep(phone, text, state) {
 
     if (foundProducts.length === 0) {
       if (shouldUseAi(text)) {
-        return sendAiHelpOrFallback(phone, text, state, "PRODUCT_FOUND");
+        return sendAiHelpOrFallback(
+          phone,
+          text,
+          state,
+          "PRODUCT_FOUND"
+        );
       }
 
       return offerProductHelp(phone, state);
@@ -726,6 +774,7 @@ async function handleProductFoundStep(phone, text, state) {
 
     state.waitingForProductName = false;
     state.foundProducts = foundProducts;
+
     states.set(phone, state);
 
     return sendProductSearchResults(phone, foundProducts);
@@ -748,6 +797,7 @@ async function handleProductFoundStep(phone, text, state) {
 
   state.selectedProduct = selectedProduct;
   state.step = "ASK_QUANTITY";
+
   states.set(phone, state);
 
   return askForQuantityAfterProduct(phone, selectedProduct);
@@ -758,8 +808,7 @@ function sendProductSearchResults(phone, foundProducts) {
     .slice(0, 3)
     .map((product, index) => {
       return `${index + 1}. ${product.name}
-Precio al detal: ${formatPrice(product.retailPrice)}
-Precio mayorista desde ${WHOLESALE_MIN_UNITS} productos: ${formatPrice(product.wholesalePrice)}
+Precio mayorista: ${formatPrice(product.wholesalePrice)}
 ${product.description}`;
     })
     .join("\n\n");
@@ -769,6 +818,8 @@ ${product.description}`;
     `Encontré estas opciones relacionadas con tu búsqueda:
 
 ${productList}
+
+📌 Los precios mostrados son mayoristas y aplican desde ${WHOLESALE_MIN_UNITS} productos en total. Pueden ser perfumes diferentes.
 
 ¿Cuál te gustaría agregar a tu pedido?
 
@@ -783,10 +834,9 @@ function askForQuantityAfterProduct(phone, selectedProduct) {
 
 Seleccionaste: ${selectedProduct.name}
 
-Precio al detal: ${formatPrice(selectedProduct.retailPrice)}
-Precio mayorista desde ${WHOLESALE_MIN_UNITS} productos: ${formatPrice(selectedProduct.wholesalePrice)}
+Precio mayorista: ${formatPrice(selectedProduct.wholesalePrice)}
 
-${selectedProduct.description}
+El precio mayorista aplica al completar mínimo ${WHOLESALE_MIN_UNITS} productos en el pedido. Pueden ser perfumes diferentes.
 
 ¿Cuántas unidades deseas agregar de este perfume?`
   );
@@ -805,6 +855,7 @@ function handleQuantityStep(phone, text, state) {
   addProductToCart(state, state.selectedProduct, quantity);
 
   state.step = "ASK_ADD_MORE_PRODUCTS";
+
   states.set(phone, state);
 
   return sendCartSummaryWithAddMoreQuestion(phone, state);
@@ -813,6 +864,7 @@ function handleQuantityStep(phone, text, state) {
 function handleAddMoreProductsStep(phone, text, state) {
   if (isYes(text)) {
     state.step = "ASK_NEXT_PRODUCT_NAME";
+
     states.set(phone, state);
 
     return sendWhatsAppMessage(
@@ -829,7 +881,9 @@ Puedes escribir el nombre del perfume o responder:
 
   if (isNo(text)) {
     calculateCartTotals(state);
+
     state.step = "ASK_CUSTOMER_NAME";
+
     states.set(phone, state);
 
     return sendWhatsAppMessage(
@@ -854,7 +908,9 @@ async function handleNextProductNameStep(phone, text, state) {
     text.includes("pdf")
   ) {
     await sendCatalog(phone);
+
     state.step = "ASK_NEXT_PRODUCT_NAME";
+
     states.set(phone, state);
 
     return sendWhatsAppMessage(
@@ -873,11 +929,17 @@ async function handleNextProductNameStep(phone, text, state) {
     text.includes("no sé")
   ) {
     state.step = "ASK_GENDER";
+
     states.set(phone, state);
+
     return sendGenderQuestion(phone);
   }
 
-  if (text === "3" || text.includes("asesor") || text.includes("asesora")) {
+  if (
+    text === "3" ||
+    text.includes("asesor") ||
+    text.includes("asesora")
+  ) {
     return handleHumanHandoff(phone);
   }
 
@@ -885,7 +947,12 @@ async function handleNextProductNameStep(phone, text, state) {
 
   if (foundProducts.length === 0) {
     if (shouldUseAi(text)) {
-      return sendAiHelpOrFallback(phone, text, state, "ASK_NEXT_PRODUCT_NAME");
+      return sendAiHelpOrFallback(
+        phone,
+        text,
+        state,
+        "ASK_NEXT_PRODUCT_NAME"
+      );
     }
 
     return offerProductHelp(phone, state);
@@ -893,14 +960,14 @@ async function handleNextProductNameStep(phone, text, state) {
 
   state.nextFoundProducts = foundProducts;
   state.step = "ASK_NEXT_PRODUCT_SELECTION";
+
   states.set(phone, state);
 
   const productList = foundProducts
     .slice(0, 3)
     .map((product, index) => {
       return `${index + 1}. ${product.name}
-Precio al detal: ${formatPrice(product.retailPrice)}
-Precio mayorista desde ${WHOLESALE_MIN_UNITS} productos: ${formatPrice(product.wholesalePrice)}
+Precio mayorista: ${formatPrice(product.wholesalePrice)}
 ${product.description}`;
     })
     .join("\n\n");
@@ -910,6 +977,8 @@ ${product.description}`;
     `Encontré estas opciones:
 
 ${productList}
+
+Los precios mostrados son mayoristas.
 
 ¿Cuál deseas agregar?
 
@@ -935,11 +1004,14 @@ function handleNextProductSelectionStep(phone, text, state) {
 
   state.selectedProduct = selectedProduct;
   state.step = "ASK_NEXT_QUANTITY";
+
   states.set(phone, state);
 
   return sendWhatsAppMessage(
     phone,
     `Seleccionaste: ${selectedProduct.name}
+
+Precio mayorista: ${formatPrice(selectedProduct.wholesalePrice)}
 
 ¿Cuántas unidades deseas agregar de este perfume?`
   );
@@ -958,6 +1030,7 @@ function handleNextQuantityStep(phone, text, state) {
   addProductToCart(state, state.selectedProduct, quantity);
 
   state.step = "ASK_ADD_MORE_PRODUCTS";
+
   states.set(phone, state);
 
   return sendCartSummaryWithAddMoreQuestion(phone, state);
@@ -968,7 +1041,9 @@ function addProductToCart(state, product, quantity) {
     state.cart = [];
   }
 
-  const existingItem = state.cart.find((item) => item.product.id === product.id);
+  const existingItem = state.cart.find(
+    (item) => item.product.id === product.id
+  );
 
   if (existingItem) {
     existingItem.quantity += quantity;
@@ -985,17 +1060,34 @@ function addProductToCart(state, product, quantity) {
 function calculateCartTotals(state) {
   const cart = state.cart || [];
 
-  const totalUnits = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const totalUnits = cart.reduce(
+    (sum, item) => sum + item.quantity,
+    0
+  );
+
   const isWholesale = totalUnits >= WHOLESALE_MIN_UNITS;
+
+  state.totalUnits = totalUnits;
+  state.isWholesale = isWholesale;
+
+  if (!isWholesale) {
+    state.totalPrice = null;
+
+    state.cart = cart.map((item) => ({
+      ...item,
+      unitPrice: null,
+      subtotal: null
+    }));
+
+    return;
+  }
 
   let totalPrice = 0;
 
-  const pricedCart = cart.map((item) => {
-    const unitPrice = isWholesale
-      ? item.product.wholesalePrice
-      : item.product.retailPrice;
-
+  state.cart = cart.map((item) => {
+    const unitPrice = item.product.wholesalePrice;
     const subtotal = unitPrice * item.quantity;
+
     totalPrice += subtotal;
 
     return {
@@ -1005,9 +1097,6 @@ function calculateCartTotals(state) {
     };
   });
 
-  state.cart = pricedCart;
-  state.totalUnits = totalUnits;
-  state.isWholesale = isWholesale;
   state.totalPrice = totalPrice;
 }
 
@@ -1027,11 +1116,41 @@ Responde *sí* para agregar otro o *no* para continuar con tus datos.`
 function buildCartSummary(state) {
   calculateCartTotals(state);
 
+  if (!state.isWholesale) {
+    const cartLines = state.cart
+      .map((item, index) => {
+        return `${index + 1}. ${item.product.name}
+Cantidad: ${item.quantity}`;
+      })
+      .join("\n\n");
+
+    const missingUnits =
+      WHOLESALE_MIN_UNITS - state.totalUnits;
+
+    return `🛒 Resumen de tu pedido:
+
+${cartLines}
+
+Total de productos: ${state.totalUnits}
+
+Para acceder al precio mayorista debes completar mínimo ${WHOLESALE_MIN_UNITS} productos.
+
+Te ${
+      missingUnits === 1
+        ? "falta 1 producto"
+        : `faltan ${missingUnits} productos`
+    } para aplicar precio mayorista.
+
+Si deseas continuar con ${state.totalUnits} ${
+      state.totalUnits === 1 ? "producto" : "productos"
+    }, una asesora confirmará el precio al detal.`;
+  }
+
   const cartLines = state.cart
     .map((item, index) => {
       return `${index + 1}. ${item.product.name}
 Cantidad: ${item.quantity}
-Precio unitario: ${formatPrice(item.unitPrice)}
+Precio mayorista unitario: ${formatPrice(item.unitPrice)}
 Subtotal: ${formatPrice(item.subtotal)}`;
     })
     .join("\n\n");
@@ -1041,14 +1160,10 @@ Subtotal: ${formatPrice(item.subtotal)}`;
 ${cartLines}
 
 Total de productos: ${state.totalUnits}
-Tipo de precio: ${state.isWholesale ? "Mayorista ✅" : "Detal"}
+Tipo de precio: Mayorista ✅
 Total estimado: ${formatPrice(state.totalPrice)}
 
-${
-  state.isWholesale
-    ? "Ya aplicas precio mayorista por llevar 3 productos o más 🎉"
-    : "Recuerda: desde 3 productos puedes acceder a precio mayorista 😊"
-}`;
+Ya aplicas precio mayorista por llevar ${WHOLESALE_MIN_UNITS} productos o más 🎉`;
 }
 
 function handleCustomerNameStep(phone, rawText, state) {
@@ -1063,6 +1178,7 @@ function handleCustomerNameStep(phone, rawText, state) {
 
   state.customerName = capitalizeWords(name);
   state.step = "ASK_CITY";
+
   states.set(phone, state);
 
   return sendWhatsAppMessage(
@@ -1085,6 +1201,7 @@ function handleCityStep(phone, rawText, state) {
 
   state.city = capitalizeWords(city);
   state.step = "ASK_ADDRESS";
+
   states.set(phone, state);
 
   return sendWhatsAppMessage(
@@ -1108,12 +1225,48 @@ function handleAddressStep(phone, rawText, state) {
   }
 
   state.address = capitalizeWords(address);
+
+  calculateCartTotals(state);
+
+  if (!state.isWholesale) {
+    state.step = "ORDER_CONFIRMED";
+
+    states.set(phone, state);
+
+    console.log("\n📦 PEDIDO AL DETAL PENDIENTE DE ASESORA");
+    console.log("Cliente:", state.customerName);
+    console.log("Teléfono:", phone);
+    console.log(buildOwnerCartSummary(state));
+    console.log("Ciudad:", state.city);
+    console.log("Dirección:", state.address);
+    console.log("Estado: precio al detal pendiente de asesora\n");
+
+    return sendWhatsAppMessage(
+      phone,
+      `Gracias, ${state.customerName} ✅
+
+Tu solicitud quedó preagendada:
+
+${buildCartSummary(state)}
+
+Ciudad: ${state.city}
+Dirección: ${state.address}
+
+Como tu pedido tiene menos de ${WHOLESALE_MIN_UNITS} productos, una asesora te confirmará el precio al detal, disponibilidad, método de pago y entrega en horario de atención.
+
+Gracias por confiar en Bendita Fragancia 🖤`
+    );
+  }
+
   state.step = "ASK_PAYMENT";
+
   states.set(phone, state);
 
   return sendWhatsAppMessage(
     phone,
-    `Gracias. Para dejar tu pedido preagendado, ¿qué método de pago prefieres?
+    `Gracias. Tu pedido ya aplica precio mayorista ✅
+
+¿Qué método de pago prefieres?
 
 1. Transferencia
 2. Contraentrega`
@@ -1135,11 +1288,25 @@ async function handlePaymentStep(phone, text, state) {
 
   calculateCartTotals(state);
 
+  if (!state.isWholesale) {
+    state.step = "ORDER_CONFIRMED";
+
+    states.set(phone, state);
+
+    return sendWhatsAppMessage(
+      phone,
+      `Tu pedido tiene menos de ${WHOLESALE_MIN_UNITS} productos.
+
+Una asesora confirmará el precio al detal y el método de pago contigo.`
+    );
+  }
+
   state.paymentMethod = paymentMethod;
   state.step = "ORDER_CONFIRMED";
+
   states.set(phone, state);
 
-  console.log("\n📦 PEDIDO PREAGENDADO POR EL BOT");
+  console.log("\n📦 PEDIDO MAYORISTA PREAGENDADO POR EL BOT");
   console.log("Cliente:", state.customerName);
   console.log("Teléfono:", phone);
   console.log(buildOwnerCartSummary(state));
@@ -1153,7 +1320,7 @@ async function handlePaymentStep(phone, text, state) {
       phone,
       `Listo, ${state.customerName} ✅
 
-Tu pedido queda preagendado para confirmación:
+Tu pedido mayorista queda preagendado para confirmación:
 
 ${buildCartSummary(state)}
 
@@ -1179,7 +1346,7 @@ Gracias por confiar en Bendita Fragancia 🖤`
     phone,
     `Listo, ${state.customerName} ✅
 
-Tu pedido queda preagendado para confirmación:
+Tu pedido mayorista queda preagendado para confirmación:
 
 ${buildCartSummary(state)}
 
@@ -1196,10 +1363,25 @@ Gracias por confiar en Bendita Fragancia 🖤`
 function buildOwnerCartSummary(state) {
   calculateCartTotals(state);
 
+  if (!state.isWholesale) {
+    const cartLines = state.cart
+      .map((item, index) => {
+        return `${index + 1}. ${item.product.name} x${item.quantity}`;
+      })
+      .join("\n");
+
+    return `Productos:
+${cartLines}
+
+Total de productos: ${state.totalUnits}
+Tipo de precio: Detal pendiente
+Total: pendiente de confirmación por asesora`;
+  }
+
   const cartLines = state.cart
     .map((item, index) => {
       return `${index + 1}. ${item.product.name} x${item.quantity}
-Precio unitario: ${formatPrice(item.unitPrice)}
+Precio mayorista unitario: ${formatPrice(item.unitPrice)}
 Subtotal: ${formatPrice(item.subtotal)}`;
     })
     .join("\n");
@@ -1208,7 +1390,7 @@ Subtotal: ${formatPrice(item.subtotal)}`;
 ${cartLines}
 
 Total de productos: ${state.totalUnits}
-Tipo de precio: ${state.isWholesale ? "Mayorista" : "Detal"}
+Tipo de precio: Mayorista
 Total estimado: ${formatPrice(state.totalPrice)}`;
 }
 
@@ -1231,15 +1413,23 @@ function handleLeadNameStep(phone, rawText, state) {
   const name = rawText.trim();
 
   if (name.length < 2) {
-    return sendWhatsAppMessage(phone, "¿Me regalas tu nombre, por favor? 😊");
+    return sendWhatsAppMessage(
+      phone,
+      "¿Me regalas tu nombre, por favor? 😊"
+    );
   }
 
   state.customerName = capitalizeWords(name);
   state.step = "ASK_LEAD_NEED";
+
   states.set(phone, state);
 
   if (state.need) {
-    return handleLeadNeedStep(phone, state.need, state);
+    return handleLeadNeedStep(
+      phone,
+      state.need,
+      state
+    );
   }
 
   return sendWhatsAppMessage(
@@ -1251,14 +1441,20 @@ function handleLeadNameStep(phone, rawText, state) {
 async function handleLeadNeedStep(phone, rawText, state) {
   state.need = rawText.trim();
   state.step = "ORDER_CONFIRMED";
+
   states.set(phone, state);
 
   console.log("\n📩 SOLICITUD REGISTRADA POR EL BOT");
   console.log("Cliente:", state.customerName);
   console.log("Teléfono:", phone);
   console.log("Necesidad:", state.need);
-  console.log("Horario de atención:", HUMAN_ATTENTION_SCHEDULE);
-  console.log("Estado: pendiente de revisión por asesoras\n");
+  console.log(
+    "Horario de atención:",
+    HUMAN_ATTENTION_SCHEDULE
+  );
+  console.log(
+    "Estado: pendiente de revisión por asesoras\n"
+  );
 
   return sendWhatsAppMessage(
     phone,
@@ -1288,19 +1484,25 @@ function searchProducts(text) {
 
   return products
     .filter((product) => {
+      if (!product.available) {
+        return false;
+      }
+
       const searchableText = normalize(
         [
           product.name,
           product.brand,
           product.gender,
           product.scent,
-          ...product.keywords
+          ...(product.keywords || [])
         ].join(" ")
       );
 
       return (
         searchableText.includes(normalizedText) ||
-        normalizedText.includes(normalize(product.name))
+        normalizedText.includes(
+          normalize(product.name)
+        )
       );
     })
     .slice(0, 5);
@@ -1308,7 +1510,9 @@ function searchProducts(text) {
 
 function getRecommendations(state) {
   const filtered = products.filter((product) => {
-    if (!product.available) return false;
+    if (!product.available) {
+      return false;
+    }
 
     const genderMatches =
       state.gender === "regalo" ||
@@ -1316,11 +1520,19 @@ function getRecommendations(state) {
       product.gender === "unisex";
 
     const scentMatches =
-      state.scent === "recomendacion" || product.scent === state.scent;
+      state.scent === "recomendacion" ||
+      product.scent === state.scent;
 
-    const budgetMatches = matchesBudget(product, state.budget);
+    const budgetMatches = matchesBudget(
+      product,
+      state.budget
+    );
 
-    return genderMatches && scentMatches && budgetMatches;
+    return (
+      genderMatches &&
+      scentMatches &&
+      budgetMatches
+    );
   });
 
   if (filtered.length >= 3) {
@@ -1330,63 +1542,168 @@ function getRecommendations(state) {
   const combined = [...filtered];
 
   for (const product of products) {
-    if (!product.available) continue;
+    if (!product.available) {
+      continue;
+    }
 
     const genderMatches =
       state.gender === "regalo" ||
       product.gender === state.gender ||
       product.gender === "unisex";
 
-    if (genderMatches && !combined.find((item) => item.id === product.id)) {
+    if (
+      genderMatches &&
+      !combined.find(
+        (item) => item.id === product.id
+      )
+    ) {
       combined.push(product);
     }
 
-    if (combined.length === 3) break;
+    if (combined.length === 3) {
+      break;
+    }
   }
 
   return combined.slice(0, 3);
 }
 
 function matchesBudget(product, budget) {
-  if (budget === "economico") return product.retailPrice <= 65000;
+  const price = product.wholesalePrice;
 
-  if (budget === "medio") {
-    return product.retailPrice > 65000 && product.retailPrice <= 85000;
+  if (budget === "economico") {
+    return price <= 55000;
   }
 
-  if (budget === "premium") return product.retailPrice > 85000;
+  if (budget === "medio") {
+    return price > 55000 && price <= 70000;
+  }
+
+  if (budget === "premium") {
+    return price > 70000;
+  }
 
   return true;
 }
 
 function parseGender(text) {
-  if (text === "1" || text.includes("mujer")) return "mujer";
-  if (text === "2" || text.includes("hombre")) return "hombre";
-  if (text === "3" || text.includes("unisex")) return "unisex";
+  if (
+    text === "1" ||
+    text.includes("mujer")
+  ) {
+    return "mujer";
+  }
+
+  if (
+    text === "2" ||
+    text.includes("hombre")
+  ) {
+    return "hombre";
+  }
+
+  if (
+    text === "3" ||
+    text.includes("unisex")
+  ) {
+    return "unisex";
+  }
+
   return null;
 }
 
 function parseScent(text) {
-  if (text === "1" || text.includes("dulce")) return "dulce";
-  if (text === "2" || text.includes("fresco")) return "fresco";
-  if (text === "3" || text.includes("elegante")) return "elegante";
-  if (text === "4" || text.includes("amaderado")) return "amaderado";
-  if (text === "5" || text.includes("citrico")) return "citrico";
-  if (text === "6" || text.includes("recomiend")) return "recomendacion";
+  if (
+    text === "1" ||
+    text.includes("dulce")
+  ) {
+    return "dulce";
+  }
+
+  if (
+    text === "2" ||
+    text.includes("fresco")
+  ) {
+    return "fresco";
+  }
+
+  if (
+    text === "3" ||
+    text.includes("elegante")
+  ) {
+    return "elegante";
+  }
+
+  if (
+    text === "4" ||
+    text.includes("amaderado")
+  ) {
+    return "amaderado";
+  }
+
+  if (
+    text === "5" ||
+    text.includes("citrico")
+  ) {
+    return "citrico";
+  }
+
+  if (
+    text === "6" ||
+    text.includes("recomiend")
+  ) {
+    return "recomendacion";
+  }
+
   return null;
 }
 
 function parseBudget(text) {
-  if (text === "1" || text.includes("economico")) return "economico";
-  if (text === "2" || text.includes("medio")) return "medio";
-  if (text === "3" || text.includes("premium")) return "premium";
-  if (text === "4" || text.includes("opciones")) return "abierto";
+  if (
+    text === "1" ||
+    text.includes("economico")
+  ) {
+    return "economico";
+  }
+
+  if (
+    text === "2" ||
+    text.includes("medio")
+  ) {
+    return "medio";
+  }
+
+  if (
+    text === "3" ||
+    text.includes("premium")
+  ) {
+    return "premium";
+  }
+
+  if (
+    text === "4" ||
+    text.includes("opciones")
+  ) {
+    return "abierto";
+  }
+
   return null;
 }
 
 function parsePaymentMethod(text) {
-  if (text === "1" || text.includes("transferencia")) return "transferencia";
-  if (text === "2" || text.includes("contraentrega")) return "contraentrega";
+  if (
+    text === "1" ||
+    text.includes("transferencia")
+  ) {
+    return "transferencia";
+  }
+
+  if (
+    text === "2" ||
+    text.includes("contraentrega")
+  ) {
+    return "contraentrega";
+  }
+
   return null;
 }
 
@@ -1412,46 +1729,82 @@ function isNo(text) {
 }
 
 function isBotAllowedToRespond() {
-  const onlyNight = process.env.BOT_ONLY_NIGHT === "true";
+  const onlyNight =
+    process.env.BOT_ONLY_NIGHT === "true";
 
   if (!onlyNight) {
     return true;
   }
 
-  const timezone = process.env.BOT_TIMEZONE || "America/Bogota";
-  const startTime = process.env.BOT_START_TIME || "18:30";
-  const endTime = process.env.BOT_END_TIME || "09:00";
+  const timezone =
+    process.env.BOT_TIMEZONE ||
+    "America/Bogota";
 
-  const currentMinutes = getCurrentMinutesInTimezone(timezone);
-  const startMinutes = timeToMinutes(startTime);
-  const endMinutes = timeToMinutes(endTime);
+  const startTime =
+    process.env.BOT_START_TIME ||
+    "18:30";
 
-  if (startMinutes === null || endMinutes === null) {
+  const endTime =
+    process.env.BOT_END_TIME ||
+    "09:00";
+
+  const currentMinutes =
+    getCurrentMinutesInTimezone(timezone);
+
+  const startMinutes =
+    timeToMinutes(startTime);
+
+  const endMinutes =
+    timeToMinutes(endTime);
+
+  if (
+    startMinutes === null ||
+    endMinutes === null
+  ) {
     console.log(
       "Horario del bot mal configurado. El bot responderá por seguridad."
     );
+
     return true;
   }
 
   if (startMinutes < endMinutes) {
-    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+    return (
+      currentMinutes >= startMinutes &&
+      currentMinutes < endMinutes
+    );
   }
 
-  return currentMinutes >= startMinutes || currentMinutes < endMinutes;
+  return (
+    currentMinutes >= startMinutes ||
+    currentMinutes < endMinutes
+  );
 }
 
 function getCurrentMinutesInTimezone(timezone) {
   const now = new Date();
 
-  const parts = new Intl.DateTimeFormat("es-CO", {
-    timeZone: timezone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false
-  }).formatToParts(now);
+  const parts = new Intl.DateTimeFormat(
+    "es-CO",
+    {
+      timeZone: timezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }
+  ).formatToParts(now);
 
-  const hour = Number(parts.find((part) => part.type === "hour")?.value);
-  const minute = Number(parts.find((part) => part.type === "minute")?.value);
+  const hour = Number(
+    parts.find(
+      (part) => part.type === "hour"
+    )?.value
+  );
+
+  const minute = Number(
+    parts.find(
+      (part) => part.type === "minute"
+    )?.value
+  );
 
   return hour * 60 + minute;
 }
@@ -1461,7 +1814,9 @@ function timeToMinutes(time) {
     return null;
   }
 
-  const [hourText, minuteText] = time.split(":");
+  const [hourText, minuteText] =
+    time.split(":");
+
   const hour = Number(hourText);
   const minute = Number(minuteText);
 
@@ -1493,7 +1848,11 @@ function capitalizeWords(text) {
     .toLowerCase()
     .split(" ")
     .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .map(
+      (word) =>
+        word.charAt(0).toUpperCase() +
+        word.slice(1)
+    )
     .join(" ");
 }
 
