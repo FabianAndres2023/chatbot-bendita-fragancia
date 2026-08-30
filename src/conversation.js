@@ -1,4 +1,7 @@
-import { sendWhatsAppMessage } from "./whatsapp.js";
+import {
+  sendWhatsAppMessage,
+  sendWhatsAppDocument
+} from "./whatsapp.js";
 
 import { products, formatPrice } from "./products.js";
 import { getAiSalesResponse } from "./ai.js";
@@ -162,23 +165,45 @@ Responde con el número de la opción que prefieras.`
 }
 
 async function sendCatalog(phone) {
-  const catalogUrl =
-    process.env.CATALOG_URL ||
-    "https://catalogo.treinta.co/benditafragancia";
+  const transport = (
+    process.env.WHATSAPP_TRANSPORT || "meta"
+  ).toLowerCase();
 
-  return sendWhatsAppMessage(
-    phone,
-    `Claro 😊 Aquí tienes nuestro catálogo actualizado:
+  const mediaId = process.env.CATALOG_MEDIA_ID || "";
 
-${catalogUrl}
+  const filename =
+    process.env.CATALOG_FILE_NAME ||
+    "CATALOGO BENDITA FRAGANCIA.pdf";
 
-Puedes revisar allí todos nuestros perfumes disponibles ✨
+  const caption = `Claro 😊 Aquí tienes nuestro catálogo actualizado.
 
 Si deseas comprar al por mayor, recuerda que el precio mayorista aplica desde ${WHOLESALE_MIN_UNITS} productos.
 
 Pueden ser perfumes iguales o diferentes.
 
-Cuando veas uno que te guste, escríbeme el nombre y te ayudo con disponibilidad y pedido.`
+Cuando veas uno que te guste, escríbeme el nombre y te ayudo con disponibilidad y pedido.`;
+
+  if (transport === "make") {
+    return sendWhatsAppDocument(
+      phone,
+      "",
+      filename,
+      caption
+    );
+  }
+
+  if (!mediaId) {
+    return sendWhatsAppMessage(
+      phone,
+      "En este momento no tengo el catálogo cargado 😔 Una asesora puede ayudarte con las opciones disponibles."
+    );
+  }
+
+  return sendWhatsAppDocument(
+    phone,
+    mediaId,
+    filename,
+    caption
   );
 }
 
