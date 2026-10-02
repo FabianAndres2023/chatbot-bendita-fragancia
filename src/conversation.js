@@ -1377,7 +1377,9 @@ ${buildCartSummary(state)}
 
 Ciudad: ${state.city}
 Dirección: ${state.address}
-Pago: ${state.paymentMethod}
+Pago: Contraentrega
+
+📦 Tu mercancía va contraentrega, no tienes que pagarla por adelantado. Para confirmar el despacho solo solicitamos la mitad del valor del transporte; la otra mitad del transporte y el valor de tu mercancía los pagas cuando recibas tu pedido. 🤝✨
 
 Apenas nuestro equipo inicie atención, una asesora te escribirá para confirmar disponibilidad, dirección exacta y entrega.
 
